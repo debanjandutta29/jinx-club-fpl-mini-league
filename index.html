@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JinxClub 7.0 — FPL Mini-League Tracker</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <style>
+    body {
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      position: relative;
+      overflow-x: hidden;
+    }
+    .tabular-nums { font-variant-numeric: tabular-nums; }
+
+    /* Subtle fixed FPL-inspired crest background */
+    .fpl-bg-layer {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      background-color: #020617;
+      background-image:
+        radial-gradient(circle at 18% 12%, rgba(16, 185, 129, 0.11), transparent 42%),
+        radial-gradient(circle at 82% 85%, rgba(139, 92, 246, 0.10), transparent 45%);
+    }
+
+    .fpl-watermark {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      opacity: 0.045;
+      background-repeat: space;
+      background-size: 240px 280px;
+      background-position: center;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 220'%3E%3Cpath d='M90 8 C58 24 26 26 14 28 L22 126 C26 168 56 196 90 212 C124 196 154 168 158 126 L166 28 C154 26 122 24 90 8 Z' fill='none' stroke='%23ffffff' stroke-width='7'/%3E%3Ccircle cx='90' cy='52' r='16' fill='%23ffffff'/%3E%3Cpath d='M58 84 C68 74 112 74 122 84 L114 128 L66 128 Z' fill='%23ffffff'/%3E%3Cpath d='M68 134 L112 134 L104 176 L76 176 Z' fill='%2310b981'/%3E%3C/svg%3E");
+    }
+
+    .app-shell {
+      position: relative;
+      z-index: 1;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+  <div class="fpl-bg-layer" aria-hidden="true"></div>
+  <div class="fpl-watermark" aria-hidden="true"></div>
+
+  <div class="app-shell">
+    <header class="border-b border-slate-800/90 bg-slate-900/85 sticky top-0 z-30 backdrop-blur">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-4">
+        <div class="flex items-center gap-3.5">
+          <img
+            src="./Jinx Club Badge.png"
+            alt="Jinx Club Badge"
+            class="h-11 w-11 rounded-xl object-contain bg-white p-1 border border-slate-700 shrink-0"
+            onerror="this.style.display='none'; document.getElementById('logoFallback').classList.remove('hidden');"
+          />
+          <span id="logoFallback" class="hidden h-11 w-11 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/40 shrink-0">JC</span>
+          <div>
+            <div class="flex items-center gap-2.5">
+              <h1 class="text-xl sm:text-2xl font-bold tracking-tight text-white">JinxClub 7.0</h1>
+              <span class="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-medium">Total Points (Monthly Sum)</span>
+            </div>
+            <p id="statusText" class="text-xs text-slate-400 mt-1">Initial snapshot from JinxClub_7.0.xlsx • 46 Managers</p>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+      <!-- Rule Banner -->
+      <div class="bg-slate-900/85 border border-emerald-500/25 rounded-xl p-4 text-xs sm:text-sm text-slate-300 backdrop-blur-sm">
+        <span class="font-semibold text-emerald-400">Double Points Rule:</span>
+        Each manager can double their points once in <span class="text-sky-300 font-medium">GW1–GW19</span> and once in <span class="text-amber-300 font-medium">GW20–GW38</span> (format in Excel: <code class="text-slate-200 bg-slate-800 px-1.5 py-0.5 rounded">GW4(96)</code>). Standings &amp; rankings are ordered by <span class="text-emerald-300 font-medium">Total Points (Monthly Sum)</span>.
+      </div>
+
+      <!-- KPI Cards -->
+      <section id="kpiGrid" class="grid grid-cols-2 lg:grid-cols-4 gap-4"></section>
+
+      <!-- Tabs -->
+      <div class="flex flex-wrap gap-2 border-b border-slate-800 pb-3">
+        <button data-tab="standings" class="tab-btn px-4 py-2 rounded-lg text-sm font-semibold bg-emerald-500 text-slate-950">Standings &amp; Doubles</button>
+        <button data-tab="motm" class="tab-btn px-4 py-2 rounded-lg text-sm font-semibold bg-slate-900/90 text-slate-300 hover:bg-slate-800 border border-slate-800">MOTM</button>
+        <button data-tab="gwwinners" class="tab-btn px-4 py-2 rounded-lg text-sm font-semibold bg-slate-900/90 text-slate-300 hover:bg-slate-800 border border-slate-800">GW Winners</button>
+      </div>
+
+      <!-- Standings Tab -->
+      <section id="tab-standings" class="tab-panel space-y-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/85 border border-slate-800 rounded-xl p-4 backdrop-blur-sm">
+          <input id="searchInput" type="text" placeholder="Filter by manager or GW pick (e.g. DODOL, GW7)..." class="w-full sm:w-80 px-3.5 py-2 rounded-lg bg-slate-950/90 border border-slate-700 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-400" />
+          <div class="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+            <select id="dpFilter" class="px-3 py-1.5 rounded-lg bg-slate-950/90 border border-slate-700 text-slate-200 text-xs focus:outline-none">
+              <option value="all">All Managers</option>
+              <option value="used_dp1">Used GW1–19 Double</option>
+              <option value="unused_dp1">GW1–19 Double Unused</option>
+              <option value="used_dp2">Used GW20–38 Double</option>
+            </select>
+            <select id="sortSelect" class="px-3 py-1.5 rounded-lg bg-slate-950/90 border border-slate-700 text-slate-200 text-xs focus:outline-none">
+              <option value="rank">Rank (Total Points)</option>
+              <option value="dp1Bonus">GW1–19 Bonus (High → Low)</option>
+              <option value="dp2Bonus">GW20–38 Bonus (High → Low)</option>
+              <option value="team">Manager Name (A → Z)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="bg-slate-900/85 border border-slate-800 rounded-xl overflow-hidden backdrop-blur-sm">
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse text-sm tabular-nums">
+              <thead>
+                <tr id="standingsHead" class="bg-slate-950/85 text-slate-400 border-b border-slate-800 text-xs uppercase tracking-wider"></tr>
+              </thead>
+              <tbody id="standingsBody" class="divide-y divide-slate-800/70"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- MOTM Tab -->
+      <section id="tab-motm" class="tab-panel hidden">
+        <div class="bg-slate-900/85 border border-slate-800 rounded-xl overflow-hidden backdrop-blur-sm">
+          <div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
+            <h2 class="font-semibold text-white">Manager of the Month (1st – 4th)</h2>
+            <span class="text-xs text-slate-400">Sheet: MOTM</span>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse text-sm">
+              <thead><tr id="motmHead" class="bg-slate-950/85 text-slate-400 border-b border-slate-800 text-xs uppercase tracking-wider"></tr></thead>
+              <tbody id="motmBody" class="divide-y divide-slate-800/70"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- GW Winners Tab -->
+      <section id="tab-gwwinners" class="tab-panel hidden">
+        <div class="bg-slate-900/85 border border-slate-800 rounded-xl overflow-hidden backdrop-blur-sm">
+          <div class="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
+            <h2 class="font-semibold text-white">Gameweek Winners (GW 1 – GW 38)</h2>
+            <span class="text-xs text-slate-400">Sheet: GW WINNERS</span>
+          </div>
+          <div id="gwWinnersGrid" class="p-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const MONTHS = ["AUG", "SEPT", "OCT", "NOV", "DEC", "JAN", "FEB", "MAR", "APR", "MAY"];
+
+    const INITIAL_DATA = {
+      points: [
+        { team: "ABHINABA", AUG: 116, SEPT: 160, OCT: 228, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "", dp2: "" },
+        { team: "ABHINIL", AUG: 149, SEPT: 205, OCT: 266, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "GW3(45)", dp2: "" },
+        { team: "ABIR", AUG: 145, SEPT: 160, OCT: 231, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "", dp2: "" },
+        { team: "ADRIK", AUG: 203, SEPT: 195, OCT: 205, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "GW1(55)", dp2: "" },
+        { team: "AGNIBHO", AUG: 194, SEPT: 172, OCT: 245, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "", dp2: "" },
+        { team: "ANIK", AUG: 150, SEPT: 204, OCT: 360, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "GW7(96)", dp2: "" },
+        { team: "ANIKET", AUG: 160, SEPT: 246, OCT: 251, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "GW4(82)", dp2: "" },
+        { team: "ANIRBAN", AUG: 140, SEPT: 185, OCT: 213, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "", dp2: "" },
+        { team: "ANKUR", AUG: 158, SEPT: 182, OCT: 340, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "GW7(82)", dp2: "" },
+        { team: "ARIJIT", AUG: 156, SEPT: 164, OCT: 245, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "", dp2: "" },
+        { team: "ARJYA", AUG: 229, SEPT: 157, OCT: 224, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "GW1(58)", dp2: "" },
+        { team: "ARPAN", AUG: 184, SEPT: 159, OCT: 325, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "GW7(84)", dp2: "" },
+        { team: "DEBANJAN", AUG: 158, SEPT: 183, OCT: 243, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "", dp2: "" },
+        { team: "DEVRAJ", AUG: 235, SEPT: 175, OCT: 272, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "GW1(67)", dp2: "" },
+        { team: "DODOL", AUG: 189, SEPT: 288, OCT: 254, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "GW4(96)", dp2: "" },
+        { team: "NILANTA", AUG: 291, SEPT: 147, OCT: 199, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "GW2(116)", dp2: "" },
+        { team: "NIRJHAR", AUG: 164, SEPT: 161, OCT: 213, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "", dp2: "" },
+        { team: "PRITHWISH", AUG: 143, SEPT: 172, OCT: 358, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "GW7(82)", dp2: "" },
+        { team: "PURBAYAN", AUG: 178, SEPT: 175, OCT: 240, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "", dp2: "" },
+        { team: "RAHUL", AUG: 162, SEPT: 191, OCT: 225, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "", dp2: "" },
+        { team: "RAJARSHI", AUG: 108, SEPT: 158, OCT: 218, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "", dp2: "" },
+        { team: "RISHAV", AUG: 160, SEPT: 209, OCT: 238, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "GW3(53)", dp2: "" },
+        { team: "ROHAN BISWAS", AUG: 168, SEPT: 179, OCT: 169, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "GW1(43)", dp2: "" },
+        { team: "ROHAN SENGUPTA", AUG: 235, SEPT: 193, OCT: 254, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "GW1(61)", dp2: "" },
+        { team: "ROHIT CHOWDHURY", AUG: 182, SEPT: 170, OCT: 244, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "", dp2: "" },
+        { team: "ROHIT SENGUPTA", AUG: 237, SEPT: 209, OCT: 255, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "GW1(80)", dp2: "" },
+        { team: "ROUNAK", AUG: 127, SEPT: 144, OCT: 262, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "", dp2: "" },
+        { team: "SAIBAL", AUG: 163, SEPT: 159, OCT: 242, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "", dp2: "" },
+        { team: "SANKALP", AUG: 165, SEPT: 172, OCT: 216, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "", dp2: "" },
+        { team: "SANNAN", AUG: 195, SEPT: 197, OCT: 211, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "", dp2: "" },
+        { team: "SANTANU", AUG: 156, SEPT: 195, OCT: 251, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "", dp2: "" },
+        { team: "SAYAN MAZUMDER", AUG: 140, SEPT: 174, OCT: 207, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "", dp2: "" },
+        { team: "SAYAN SARKAR", AUG: 193, SEPT: 254, OCT: 229, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "GW4(81)", dp2: "" },
+        { team: "SAYANTAN", AUG: 100, SEPT: 202, OCT: 240, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "", dp2: "" },
+        { team: "SOMRAJ", AUG: 128, SEPT: 137, OCT: 151, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "", dp2: "" },
+        { team: "SOUMAK", AUG: 252, SEPT: 133, OCT: 238, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "GW1(67)", dp2: "" },
+        { team: "SOUMIK", AUG: 236, SEPT: 185, OCT: 279, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "GW1(65)", dp2: "" },
+        { team: "SOURADEEP", AUG: 193, SEPT: 247, OCT: 245, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "GW3(49)", dp2: "" },
+        { team: "SOUVIK BANERJEE", AUG: 182, SEPT: 150, OCT: 327, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "GW7(84)", dp2: "" },
+        { team: "SOUVIK SENGUPTA", AUG: 168, SEPT: 166, OCT: 231, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "", dp2: "" },
+        { team: "SREEJAN", AUG: 149, SEPT: 208, OCT: 244, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "", dp2: "" },
+        { team: "SUBHADEEP", AUG: 136, SEPT: 191, OCT: 246, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "", dp2: "" },
+        { team: "SUDEB", AUG: 176, SEPT: 200, OCT: 246, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "", dp2: "" },
+        { team: "SUNNY", AUG: 256, SEPT: 169, OCT: 243, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "GW1(74)", dp2: "" },
+        { team: "TANMOY", AUG: 181, SEPT: 170, OCT: 282, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "", dp2: "" },
+        { team: "UDAY", AUG: 163, SEPT: 223, OCT: 200, NOV: null, DEC: null, JAN: null, FEB: null, MAR: null, APR: null, MAY: null, dp1: "GW3(56)", dp2: "" }
+      ],
+      motm: [
+        { pos: "1ST", AUG: "NILANTA", SEPT: "DODOL", OCT: "ANIK", NOV: "", DEC: "", JAN: "", FEB: "", MAR: "", APR: "", MAY: "" },
+        { pos: "2ND", AUG: "SUNNY", SEPT: "SAYAN SARKAR", OCT: "PRITHWISH", NOV: "", DEC: "", JAN: "", FEB: "", MAR: "", APR: "", MAY: "" },
+        { pos: "3RD", AUG: "SOUMAK", SEPT: "SOURADEEP", OCT: "ANKUR", NOV: "", DEC: "", JAN: "", FEB: "", MAR: "", APR: "", MAY: "" },
+        { pos: "4TH", AUG: "ROHIT SENGUPTA", SEPT: "ANIKET", OCT: "SOUVIK BANERJEE", NOV: "", DEC: "", JAN: "", FEB: "", MAR: "", APR: "", MAY: "" }
+      ],
+      gwWinners: [
+        { gw: 1, winner: "ROHIT SENGUPTA" }, { gw: 2, winner: "NILANTA" }, { gw: 3, winner: "UDAY" },
+        { gw: 4, winner: "DODOL" }, { gw: 5, winner: "SANNAN" }, { gw: 6, winner: "DEVRAJ" },
+        { gw: 7, winner: "ANIK" }, { gw: 8, winner: "SOURADEEP" }, { gw: 9, winner: "SAIBAL" },
+        { gw: 10, winner: "SUBHADEEP" }, ...Array.from({ length: 28 }, (_, i) => ({ gw: i + 11, winner: "" }))
+      ]
+    };
+
+    let state = JSON.parse(JSON.stringify(INITIAL_DATA));
+
+    function parseDoubleEntry(str) {
+      if (!str) return { gw: null, bonus: 0 };
+      const match = String(str).match(/GW\s*(\d+)\s*\(\s*(-?\d+)\s*\)/i);
+      if (match) return { gw: Number(match[1]), bonus: Number(match[2]) };
+      const numOnly = Number(String(str).trim());
+      return { gw: null, bonus: Number.isNaN(numOnly) ? 0 : numOnly };
+    }
+
+    function computeRows(rawRows) {
+      const enriched = rawRows
+        .filter((r) => r.team && String(r.team).trim() !== "")
+        .map((r) => {
+          let totalPoints = 0;
+          const mVals = {};
+          for (const m of MONTHS) {
+            const v = r[m];
+            const num = typeof v === "number" && !Number.isNaN(v)
+              ? v
+              : (v !== null && v !== "" && !Number.isNaN(Number(v)) ? Number(v) : null);
+            mVals[m] = num;
+            if (num !== null) totalPoints += num;
+          }
+          const d1 = parseDoubleEntry(r.dp1);
+          const d2 = parseDoubleEntry(r.dp2);
+
+          return { ...r, ...mVals, totalPoints, dp1Bonus: d1.bonus, dp2Bonus: d2.bonus };
+        });
+
+      const sorted = [...enriched].sort((a, b) => b.totalPoints - a.totalPoints);
+      let curRank = 1;
+      for (let i = 0; i < sorted.length; i++) {
+        if (i > 0 && sorted[i].totalPoints < sorted[i - 1].totalPoints) curRank = i + 1;
+        sorted[i].rank = curRank;
+      }
+      return sorted;
+    }
+
+    function activeMonths(rows) {
+      const used = MONTHS.filter((m) => rows.some((r) => r[m] !== null && r[m] !== undefined));
+      return used.length ? used : ["AUG", "SEPT", "OCT"];
+    }
+
+    function renderAll(statusMsg) {
+      if (statusMsg) document.getElementById("statusText").textContent = statusMsg;
+      const computed = computeRows(state.points);
+
+      const leader = computed[0];
+      const avgPts = (computed.reduce((s, r) => s + r.totalPoints, 0) / Math.max(computed.length, 1)).toFixed(1);
+      const dp1Count = computed.filter((r) => r.dp1Bonus > 0).length;
+      const bestDp1 = [...computed].sort((a, b) => b.dp1Bonus - a.dp1Bonus)[0];
+
+      document.getElementById("kpiGrid").innerHTML = `
+        <div class="bg-slate-900/85 border border-slate-800 rounded-xl p-4 backdrop-blur-sm">
+          <div class="text-xs text-slate-400 uppercase tracking-wider">Leader (Total Points)</div>
+          <div class="text-lg font-bold text-emerald-400 mt-1">${leader ? leader.team : "-"}</div>
+          <div class="text-xs text-slate-400 mt-0.5 tabular-nums">${leader ? leader.totalPoints + " pts" : ""}</div>
+        </div>
+        <div class="bg-slate-900/85 border border-slate-800 rounded-xl p-4 backdrop-blur-sm">
+          <div class="text-xs text-slate-400 uppercase tracking-wider">League Average</div>
+          <div class="text-lg font-bold text-white mt-1 tabular-nums">${avgPts} pts</div>
+          <div class="text-xs text-slate-400 mt-0.5">${computed.length} managers</div>
+        </div>
+        <div class="bg-slate-900/85 border border-slate-800 rounded-xl p-4 backdrop-blur-sm">
+          <div class="text-xs text-slate-400 uppercase tracking-wider">GW1–19 Doubles Used</div>
+          <div class="text-lg font-bold text-sky-300 mt-1 tabular-nums">${dp1Count} / ${computed.length}</div>
+          <div class="text-xs text-slate-400 mt-0.5">${computed.length - dp1Count} still available</div>
+        </div>
+        <div class="bg-slate-900/85 border border-slate-800 rounded-xl p-4 backdrop-blur-sm">
+          <div class="text-xs text-slate-400 uppercase tracking-wider">Top Double Bonus</div>
+          <div class="text-lg font-bold text-amber-300 mt-1">${bestDp1 && bestDp1.dp1Bonus > 0 ? bestDp1.team : "-"}</div>
+          <div class="text-xs text-slate-400 mt-0.5 tabular-nums">${bestDp1 && bestDp1.dp1Bonus > 0 ? "+" + bestDp1.dp1Bonus + " pts (" + bestDp1.dp1 + ")" : ""}</div>
+        </div>
+      `;
+
+      const q = document.getElementById("searchInput").value.trim().toLowerCase();
+      const dpFilter = document.getElementById("dpFilter").value;
+      const sortBy = document.getElementById("sortSelect").value;
+      const shownMonths = activeMonths(computed);
+
+      let filtered = computed.filter((r) => {
+        if (dpFilter === "used_dp1" && !(r.dp1Bonus > 0)) return false;
+        if (dpFilter === "unused_dp1" && r.dp1Bonus > 0) return false;
+        if (dpFilter === "used_dp2" && !(r.dp2Bonus > 0)) return false;
+        if (!q) return true;
+        return (
+          r.team.toLowerCase().includes(q) ||
+          String(r.dp1 || "").toLowerCase().includes(q) ||
+          String(r.dp2 || "").toLowerCase().includes(q)
+        );
+      });
+
+      filtered.sort((a, b) => {
+        if (sortBy === "dp1Bonus") return b.dp1Bonus - a.dp1Bonus || a.rank - b.rank;
+        if (sortBy === "dp2Bonus") return b.dp2Bonus - a.dp2Bonus || a.rank - b.rank;
+        if (sortBy === "team") return a.team.localeCompare(b.team);
+        return a.rank - b.rank || a.team.localeCompare(b.team);
+      });
+
+      document.getElementById("standingsHead").innerHTML = `
+        <th class="py-3 px-3">Rank</th>
+        <th class="py-3 px-4">Manager</th>
+        ${shownMonths.map((m) => `<th class="py-3 px-3 text-right">${m}</th>`).join("")}
+        <th class="py-3 px-3">GW1–19 Double</th>
+        <th class="py-3 px-3">GW20–38 Double</th>
+        <th class="py-3 px-3 text-right text-emerald-300">Total Points</th>
+      `;
+
+      document.getElementById("standingsBody").innerHTML = filtered
+        .map((r) => `
+          <tr class="hover:bg-slate-800/40 transition">
+            <td class="py-2.5 px-3 font-bold text-slate-200">#${r.rank}</td>
+            <td class="py-2.5 px-4 font-semibold text-white">${r.team}</td>
+            ${shownMonths.map((m) => `<td class="py-2.5 px-3 text-right text-slate-300">${r[m] !== null && r[m] !== undefined ? r[m] : "—"}</td>`).join("")}
+            <td class="py-2.5 px-3 text-xs ${r.dp1Bonus > 0 ? "text-sky-300 font-medium" : "text-slate-500"}">${r.dp1 || "Unused"}</td>
+            <td class="py-2.5 px-3 text-xs ${r.dp2Bonus > 0 ? "text-amber-300 font-medium" : "text-slate-500"}">${r.dp2 || "Unused"}</td>
+            <td class="py-2.5 px-3 text-right font-bold text-emerald-400">${r.totalPoints}</td>
+          </tr>
+        `)
+        .join("");
+
+      const motmCols = activeMonths(state.points);
+      document.getElementById("motmHead").innerHTML = `
+        <th class="py-3 px-4">Pos</th>
+        ${motmCols.map((m) => `<th class="py-3 px-4">${m}</th>`).join("")}
+      `;
+      document.getElementById("motmBody").innerHTML = state.motm
+        .map((row) => `
+          <tr class="hover:bg-slate-800/40">
+            <td class="py-3 px-4 font-bold text-amber-300">${row.pos}</td>
+            ${motmCols.map((m) => `<td class="py-3 px-4 text-slate-200">${row[m] || "—"}</td>`).join("")}
+          </tr>
+        `)
+        .join("");
+
+      document.getElementById("gwWinnersGrid").innerHTML = state.gwWinners
+        .map((item) => `
+          <div class="rounded-lg border ${item.winner ? "bg-slate-950/80 border-emerald-500/30" : "bg-slate-950/30 border-slate-800/70"} p-3">
+            <div class="text-[11px] uppercase tracking-wider text-slate-400">GW ${item.gw}</div>
+            <div class="text-sm font-semibold mt-1 ${item.winner ? "text-emerald-300" : "text-slate-600"}">${item.winner || "Pending"}</div>
+          </div>
+        `)
+        .join("");
+    }
+
+    function parseWorkbook(arrayBuffer, filename) {
+      const wb = XLSX.read(arrayBuffer, { type: "array" });
+
+      const ptsName = wb.SheetNames.find((s) => s.toUpperCase().includes("POINT")) || wb.SheetNames[0];
+      if (ptsName) {
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[ptsName], { header: 1, defval: null });
+        const parsedPts = [];
+
+        for (let r = 1; r < rows.length; r++) {
+          const row = rows[r];
+          if (!row) continue;
+          const team = row[0] ? String(row[0]).trim() : "";
+          if (!team) continue;
+          const obj = {
+            team,
+            dp1: row[11] ? String(row[11]).trim() : "",
+            dp2: row[12] ? String(row[12]).trim() : ""
+          };
+          MONTHS.forEach((m, idx) => {
+            const val = row[idx + 1];
+            obj[m] = val === null || val === "" ? null : Number(val);
+          });
+          parsedPts.push(obj);
+        }
+        if (parsedPts.length) state.points = parsedPts;
+      }
+
+      const motmName = wb.SheetNames.find((s) => s.toUpperCase().includes("MOTM"));
+      if (motmName) {
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[motmName], { header: 1, defval: "" });
+        const parsedMotm = [];
+        for (let r = 1; r < rows.length; r++) {
+          const row = rows[r];
+          if (!row || !row[0]) continue;
+          const entry = { pos: String(row[0]).trim() };
+          MONTHS.forEach((m, idx) => {
+            entry[m] = row[idx + 1] ? String(row[idx + 1]).trim() : "";
+          });
+          parsedMotm.push(entry);
+        }
+        if (parsedMotm.length) state.motm = parsedMotm;
+      }
+
+      const gwName = wb.SheetNames.find((s) => s.toUpperCase().includes("GW"));
+      if (gwName) {
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[gwName], { header: 1, defval: "" });
+        const parsedGw = [];
+        for (let r = 1; r < rows.length; r++) {
+          const row = rows[r];
+          if (!row || row[0] === "") continue;
+          parsedGw.push({ gw: Number(row[0]) || r, winner: row[1] ? String(row[1]).trim() : "" });
+        }
+        if (parsedGw.length) state.gwWinners = parsedGw;
+      }
+
+      renderAll(`Synced from ${filename} • ${state.points.length} Managers`);
+    }
+
+    async function loadFromRepo() {
+      try {
+        const res = await fetch("./JinxClub_7.0.xlsx?v=" + Date.now());
+        if (!res.ok) return;
+        parseWorkbook(await res.arrayBuffer(), "JinxClub_7.0.xlsx");
+      } catch {
+        // Falls back to INITIAL_DATA when opened outside a web server
+      }
+    }
+
+    ["searchInput", "dpFilter", "sortSelect"].forEach((id) => {
+      document.getElementById(id).addEventListener("input", () => renderAll());
+      document.getElementById(id).addEventListener("change", () => renderAll());
+    });
+
+    document.querySelectorAll(".tab-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".tab-btn").forEach((b) => {
+          b.className = "tab-btn px-4 py-2 rounded-lg text-sm font-semibold bg-slate-900/90 text-slate-300 hover:bg-slate-800 border border-slate-800";
+        });
+        btn.className = "tab-btn px-4 py-2 rounded-lg text-sm font-semibold bg-emerald-500 text-slate-950";
+        document.querySelectorAll(".tab-panel").forEach((p) => p.classList.add("hidden"));
+        document.getElementById("tab-" + btn.dataset.tab).classList.remove("hidden");
+      });
+    });
+
+    renderAll();
+    loadFromRepo();
+  </script>
+</body>
+</html>
